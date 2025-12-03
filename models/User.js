@@ -47,6 +47,39 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Profile fields for sellers
+  title: {
+    type: String,
+    trim: true,
+    default: null
+  },
+  skills: [{
+    type: String,
+    trim: true
+  }],
+  bio: {
+    type: String,
+    trim: true,
+    default: null
+  },
+  portfolio: {
+    images: [{
+      type: String
+    }],
+    links: [{
+      type: String,
+      trim: true
+    }]
+  },
+  languages: [{
+    type: String,
+    trim: true
+  }],
+  experienceLevel: {
+    type: String,
+    enum: ['Beginner', 'Intermediate', 'Expert', 'Top Rated', 'Level 1', 'Level 2'],
+    default: null
+  },
   otpEnabled: {
     type: Boolean,
     default: false

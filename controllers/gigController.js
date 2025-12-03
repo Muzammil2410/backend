@@ -39,7 +39,7 @@ exports.createGig = async (req, res) => {
       });
     }
 
-    // Get seller ID from token or request body
+    // Get seller ID from token (primary source) or request body (fallback)
     let sellerId = req.userId || seller?.id;
 
     if (!sellerId) {
@@ -49,12 +49,22 @@ exports.createGig = async (req, res) => {
       });
     }
 
-    // Convert string ID to ObjectId if needed (for MongoDB)
-    if (typeof sellerId === 'string' && !sellerId.match(/^[0-9a-fA-F]{24}$/)) {
-      // If it's not a valid MongoDB ObjectId, we'll use it as is
-      // In production, you'd want to look up the user and get their MongoDB _id
-    }
+    // Convert sellerId to string to ensure consistency
+    sellerId = sellerId.toString();
 
+    // Ensure seller object has required id field - always use sellerId from token
+    const sellerData = seller || {};
+    // Always use sellerId from token as the primary source for seller.id
+    sellerData.id = sellerId;
+    
+    // Ensure other required seller fields are present
+    if (!sellerData.name) {
+      sellerData.name = seller?.name || 'Unknown Seller';
+    }
+    if (!sellerData.level) {
+      sellerData.level = seller?.level || 'Expert';
+    }
+    
     // Create gig
     const gig = new Gig({
       title,
@@ -68,10 +78,12 @@ exports.createGig = async (req, res) => {
       packages: packages || [],
       requirements: requirements || [],
       sellerId,
-      seller: seller || {
-        id: sellerId,
-        name: 'Unknown Seller',
-        level: 'Expert'
+      seller: {
+        id: sellerData.id, // Always set from sellerId
+        name: sellerData.name,
+        avatar: sellerData.avatar || null,
+        level: sellerData.level,
+        title: sellerData.title || null
       },
       active: true
     });
@@ -175,17 +187,18 @@ exports.getAllGigs = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const limitNum = parseInt(limit);
 
-    // Execute query - handle price filtering with packages
-    let query = Gig.find(filter);
+    // Optimized query - exclude heavy fields and use lean for speed
+    let query = Gig.find(filter)
+      .select('-description') // Exclude description field for faster query
+      .lean(); // Use lean() for faster plain JavaScript objects
     
     // If price filtering is needed, fetch more results to account for package-based filtering
-    const fetchLimit = (minPrice || maxPrice) ? limitNum * 5 : limitNum;
+    const fetchLimit = (minPrice || maxPrice) ? limitNum * 3 : limitNum;
     
     let gigs = await query
       .sort(sortOption)
       .skip(skip)
-      .limit(fetchLimit)
-      .lean();
+      .limit(fetchLimit);
     
     // Filter by package prices if minPrice or maxPrice is set
     // This ensures we check the minimum package price (what users see), not just base price
@@ -217,34 +230,47 @@ exports.getAllGigs = async (req, res) => {
       gigs = gigs.slice(0, limitNum);
     }
     
-    // Add order count for each gig
-    // Use Promise.all to count orders for all gigs in parallel
-    const gigsWithOrderCount = await Promise.all(
-      gigs.map(async (gig) => {
-        const gigId = gig._id?.toString() || gig.id?.toString();
-        let orderCount = 0;
-        
-        if (gigId) {
-          // Count orders for this gig - handle both string and ObjectId
-          try {
-            orderCount = await Order.countDocuments({
-              $or: [
-                { gigId: gigId },
-                { gigId: gig._id }
-              ]
-            });
-          } catch (error) {
-            console.error(`Error counting orders for gig ${gigId}:`, error);
-            orderCount = 0;
+    // Optimize order count - use single aggregation query instead of per-gig queries (much faster)
+    const gigIds = gigs.map(gig => gig._id?.toString() || gig.id?.toString()).filter(Boolean);
+    
+    let orderCountsMap = {};
+    if (gigIds.length > 0) {
+      try {
+        // Single aggregation query to count all orders at once (much faster than N queries)
+        const orderCounts = await Order.aggregate([
+          {
+            $match: {
+              gigId: { $in: gigIds }
+            }
+          },
+          {
+            $group: {
+              _id: '$gigId',
+              count: { $sum: 1 }
+            }
           }
-        }
+        ]);
         
-        return {
-          ...gig,
-          orderCount
-        };
-      })
-    );
+        // Convert to map for O(1) lookup
+        orderCountsMap = orderCounts.reduce((acc, item) => {
+          const key = String(item._id);
+          acc[key] = item.count;
+          return acc;
+        }, {});
+      } catch (error) {
+        console.error('Error aggregating order counts:', error);
+        // Continue with empty map if aggregation fails
+      }
+    }
+    
+    // Add order count to gigs using fast map lookup
+    const gigsWithOrderCount = gigs.map(gig => {
+      const gigId = String(gig._id || gig.id || '');
+      return {
+        ...gig,
+        orderCount: orderCountsMap[gigId] || 0
+      };
+    });
     
     gigs = gigsWithOrderCount;
     

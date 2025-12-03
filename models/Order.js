@@ -106,6 +106,7 @@ orderSchema.index({ buyerId: 1 });
 orderSchema.index({ sellerId: 1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ createdAt: -1 });
+orderSchema.index({ gigId: 1 }); // Index for gigId to speed up order count queries
 
 module.exports = mongoose.model('Order', orderSchema);
 

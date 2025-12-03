@@ -250,7 +250,21 @@ exports.checkUsernameAvailability = async (req, res) => {
 // @access  Private
 exports.updateProfile = async (req, res) => {
   try {
-    const { name, email, phone, username, avatar, otpEnabled } = req.body;
+    const { 
+      name, 
+      email, 
+      phone, 
+      username, 
+      avatar, 
+      otpEnabled,
+      // Seller profile fields
+      title,
+      skills,
+      bio,
+      portfolio,
+      languages,
+      experienceLevel
+    } = req.body;
     
     const user = await User.findById(req.userId);
     
@@ -279,13 +293,41 @@ exports.updateProfile = async (req, res) => {
       }
     }
 
-    // Update fields
-    if (name) user.name = name.trim();
-    if (email) user.email = email.toLowerCase().trim();
-    if (phone) user.phone = phone.trim();
+    // Update basic fields
+    if (name !== undefined) user.name = name.trim();
+    if (email !== undefined) user.email = email ? email.toLowerCase().trim() : null;
+    if (phone !== undefined) user.phone = phone ? phone.trim() : null;
     if (username !== undefined) user.username = username ? username.trim().toLowerCase() : null;
     if (avatar !== undefined) user.avatar = avatar;
     if (otpEnabled !== undefined) user.otpEnabled = otpEnabled;
+    
+    // Update seller profile fields (only for freelancers)
+    if (user.role === 'freelancer') {
+      if (title !== undefined) user.title = title ? title.trim() : null;
+      if (skills !== undefined) {
+        user.skills = Array.isArray(skills) 
+          ? skills.filter(s => s && s.trim()).map(s => s.trim())
+          : [];
+      }
+      if (bio !== undefined) user.bio = bio ? bio.trim() : null;
+      if (portfolio !== undefined) {
+        user.portfolio = {
+          images: Array.isArray(portfolio.images) ? portfolio.images : [],
+          links: Array.isArray(portfolio.links) 
+            ? portfolio.links.filter(l => l && l.trim()).map(l => l.trim())
+            : []
+        };
+      }
+      if (languages !== undefined) {
+        user.languages = Array.isArray(languages)
+          ? languages.filter(l => l && l.trim()).map(l => l.trim())
+          : [];
+      }
+      if (experienceLevel !== undefined) {
+        user.experienceLevel = experienceLevel || null;
+      }
+    }
+    
     user.updatedAt = new Date();
 
     await user.save();
