@@ -71,6 +71,8 @@ app.use('/api/gigs', require('./routes/gigRoutes'));
 app.use('/api/orders', require('./routes/orderRoutes'));
 app.use('/api/payment-details', require('./routes/paymentDetailRoutes'));
 app.use('/api/chat', require('./routes/chatRoutes'));
+// Admin routes
+app.use('/api/admin', require('./routes/adminRoutes'));
 
 // Socket.io setup
 const io = new Server(server, {
