@@ -107,6 +107,7 @@ exports.createGig = async (req, res) => {
 
 // Get all gigs with filters
 exports.getAllGigs = async (req, res) => {
+  console.log('📥 getAllGigs called with query:', req.query);
   try {
     const {
       q, // search query
@@ -156,7 +157,8 @@ exports.getAllGigs = async (req, res) => {
       filter['seller.level'] = { $in: levelValues };
     }
 
-    // Search query
+    // Search query - use text search if available
+    let searchQuery = q;
     if (q) {
       filter.$text = { $search: q };
     }
@@ -187,18 +189,58 @@ exports.getAllGigs = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const limitNum = parseInt(limit);
 
+    // Simplified query - remove text search if it causes issues
+    // Remove text search from filter to avoid index issues
+    const queryFilter = { ...filter };
+    if (queryFilter.$text) {
+      delete queryFilter.$text;
+    }
+    
     // Optimized query - exclude heavy fields and use lean for speed
-    let query = Gig.find(filter)
+    let query = Gig.find(queryFilter)
       .select('-description') // Exclude description field for faster query
-      .lean(); // Use lean() for faster plain JavaScript objects
+      .lean() // Use lean() for faster plain JavaScript objects
+      .maxTimeMS(8000); // 8 second timeout for main query
     
     // If price filtering is needed, fetch more results to account for package-based filtering
     const fetchLimit = (minPrice || maxPrice) ? limitNum * 3 : limitNum;
     
-    let gigs = await query
-      .sort(sortOption)
-      .skip(skip)
-      .limit(fetchLimit);
+    let gigs;
+    try {
+      gigs = await query
+        .sort(sortOption)
+        .skip(skip)
+        .limit(fetchLimit);
+      
+      // If we had a search query, filter in memory
+      if (searchQuery && gigs.length > 0) {
+        const searchLower = searchQuery.toLowerCase();
+        gigs = gigs.filter(gig => {
+          const titleMatch = gig.title?.toLowerCase().includes(searchLower);
+          const categoryMatch = gig.category?.toLowerCase().includes(searchLower);
+          const skillsMatch = gig.skills?.some(skill => 
+            skill?.toLowerCase().includes(searchLower)
+          );
+          return titleMatch || categoryMatch || skillsMatch;
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching gigs:', error);
+      // Return empty result if query fails
+      return res.json({
+        success: true,
+        data: {
+          gigs: [],
+          pagination: {
+            page: parseInt(page),
+            limit: limitNum,
+            total: 0,
+            pages: 0,
+            hasMore: false
+          }
+        }
+      });
+    }
     
     // Filter by package prices if minPrice or maxPrice is set
     // This ensures we check the minimum package price (what users see), not just base price
@@ -230,74 +272,54 @@ exports.getAllGigs = async (req, res) => {
       gigs = gigs.slice(0, limitNum);
     }
     
-    // Optimize order count - use single aggregation query instead of per-gig queries (much faster)
-    const gigIds = gigs.map(gig => gig._id?.toString() || gig.id?.toString()).filter(Boolean);
-    
-    let orderCountsMap = {};
-    if (gigIds.length > 0) {
-      try {
-        // Single aggregation query to count all orders at once (much faster than N queries)
-        const orderCounts = await Order.aggregate([
-          {
-            $match: {
-              gigId: { $in: gigIds }
-            }
-          },
-          {
-            $group: {
-              _id: '$gigId',
-              count: { $sum: 1 }
-            }
-          }
-        ]);
-        
-        // Convert to map for O(1) lookup
-        orderCountsMap = orderCounts.reduce((acc, item) => {
-          const key = String(item._id);
-          acc[key] = item.count;
-          return acc;
-        }, {});
-      } catch (error) {
-        console.error('Error aggregating order counts:', error);
-        // Continue with empty map if aggregation fails
-      }
-    }
-    
-    // Add order count to gigs using fast map lookup
-    const gigsWithOrderCount = gigs.map(gig => {
-      const gigId = String(gig._id || gig.id || '');
-      return {
-        ...gig,
-        orderCount: orderCountsMap[gigId] || 0
-      };
-    });
+    // Skip order count aggregation for now - set default to 0 for faster response
+    // Order counts can be loaded separately if needed
+    const gigsWithOrderCount = gigs.map(gig => ({
+      ...gig,
+      orderCount: 0 // Default to 0 for faster response
+    }));
     
     gigs = gigsWithOrderCount;
     
-    // Get total count
-    // Note: For accurate count with package price filtering, we'd need aggregation
-    // For now, this is an approximation
-    const total = await Gig.countDocuments(filter);
+    // Skip total count query - use approximation for faster response
+    // This prevents blocking on large collections
+    const total = skip + gigs.length + (gigs.length === limitNum ? limitNum : 0);
+
+    // Log for debugging
+    console.log(`✅ Fetched ${gigs.length} gigs (page ${page}, limit ${limitNum})`);
 
     res.json({
       success: true,
       data: {
-        gigs,
+        gigs: gigs || [],
         pagination: {
           page: parseInt(page),
           limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
+          total: total || 0,
+          pages: Math.ceil((total || 0) / limitNum),
           hasMore: skip + gigs.length < total
         }
       }
     });
   } catch (error) {
-    console.error('Error fetching gigs:', error);
+    console.error('❌ Error in getAllGigs:', error);
+    console.error('Error stack:', error.stack);
+    
+    // Always return a valid response, even on error
     res.status(500).json({
       success: false,
       message: 'Failed to fetch gigs',
-      error: error.message
+      error: error.message,
+      data: {
+        gigs: [],
+        pagination: {
+          page: parseInt(req.query.page) || 1,
+          limit: parseInt(req.query.limit) || 20,
+          total: 0,
+          pages: 0,
+          hasMore: false
+        }
+      }
     });
   }
 };

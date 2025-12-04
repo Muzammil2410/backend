@@ -29,6 +29,15 @@ exports.createOrder = async (req, res) => {
       });
     }
 
+    // Validate sellerId is provided
+    const sellerId = req.body.sellerId;
+    if (!sellerId || sellerId.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Seller ID is required. Please ensure the gig has a valid seller.'
+      });
+    }
+
     // Get gig details (you might want to fetch from Gig model)
     // For now, we'll use the data from request body or fetch it
     // In production, you should fetch gig details from database
@@ -38,7 +47,7 @@ exports.createOrder = async (req, res) => {
       gigTitle: req.body.gigTitle || 'Gig Order',
       buyerId,
       buyerName: req.body.buyerName || user?.name || 'Buyer',
-      sellerId: req.body.sellerId || '',
+      sellerId: sellerId.toString().trim(),
       sellerName: req.body.sellerName || 'Seller',
       package: packageName || 'standard',
       amount: parseFloat(amount),
@@ -46,7 +55,8 @@ exports.createOrder = async (req, res) => {
       deliveryTime: deliveryTime ? parseInt(deliveryTime) : 0,
       status: paymentScreenshot ? 'Payment pending verify' : 'Pending payment',
       paymentScreenshot: paymentScreenshot || null,
-      paymentUploadedAt: paymentScreenshot ? new Date() : null
+      paymentUploadedAt: paymentScreenshot ? new Date() : null,
+      paymentVerifiedAt: null // Will be set when admin verifies
     };
 
     const order = new Order(orderData);
@@ -59,6 +69,26 @@ exports.createOrder = async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating order:', error);
+    console.error('Error details:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.keys(error.errors || {}).map(key => ({
+        field: key,
+        message: error.errors[key].message
+      }));
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: validationErrors,
+        error: error.message
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Failed to create order',
@@ -113,7 +143,7 @@ exports.getAllOrders = async (req, res) => {
   }
 };
 
-// Get seller's orders
+// Get seller's orders (only show orders after admin verification)
 exports.getSellerOrders = async (req, res) => {
   try {
     const sellerId = req.userId;
@@ -125,7 +155,11 @@ exports.getSellerOrders = async (req, res) => {
       });
     }
 
-    const orders = await Order.find({ sellerId })
+    // Only show orders that have been verified by admin (status is not "Payment pending verify")
+    const orders = await Order.find({ 
+      sellerId,
+      status: { $ne: 'Payment pending verify' } // Exclude orders pending admin verification
+    })
       .sort({ createdAt: -1 })
       .lean();
 
@@ -206,9 +240,23 @@ exports.updateOrder = async (req, res) => {
       });
     }
 
+    // Handle client confirmation of completion
+    if (updateData.confirmCompletion === true && order.buyerId === userId) {
+      // Only allow client to confirm if order is already completed by seller
+      if (order.status !== 'Completed') {
+        return res.status(400).json({
+          success: false,
+          message: 'Order must be completed by seller before client can confirm'
+        });
+      }
+      // Set client confirmation timestamp
+      order.clientConfirmedCompletionAt = new Date();
+      updateData.clientConfirmedCompletionAt = order.clientConfirmedCompletionAt;
+    }
+
     // Update fields
     Object.keys(updateData).forEach(key => {
-      if (updateData[key] !== undefined) {
+      if (updateData[key] !== undefined && key !== 'confirmCompletion') {
         order[key] = updateData[key];
       }
     });

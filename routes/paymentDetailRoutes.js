@@ -3,6 +3,9 @@ const router = express.Router();
 const paymentDetailController = require('../controllers/paymentDetailController');
 const { authMiddleware, optionalAuth } = require('../middleware/auth');
 
+// Get admin payment details (public endpoint - for order payment page)
+router.get('/admin', paymentDetailController.getAdminPaymentDetails);
+
 // Get payment details by user ID (optional auth - for clients to see seller's payment details)
 router.get('/user/:userId', optionalAuth, paymentDetailController.getPaymentDetailsByUserId);
 

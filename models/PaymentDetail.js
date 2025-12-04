@@ -19,6 +19,14 @@ const paymentDetailSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  bankAccountName: {
+    type: String,
+    default: ''
+  },
+  bankName: {
+    type: String,
+    default: ''
+  },
   branchCode: {
     type: String,
     default: ''
