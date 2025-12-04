@@ -7,7 +7,9 @@ const {
   getAllClients,
   getPendingVerificationOrders,
   getOrderHistory,
-  verifyPayment
+  verifyPayment,
+  getWithdrawalRequests,
+  processWithdrawal
 } = require('../controllers/adminController');
 const { adminAuthMiddleware } = require('../middleware/adminAuth');
 
@@ -21,6 +23,8 @@ router.get('/clients', adminAuthMiddleware, getAllClients);
 router.get('/orders/pending-verification', adminAuthMiddleware, getPendingVerificationOrders);
 router.get('/orders/history', adminAuthMiddleware, getOrderHistory);
 router.post('/orders/:orderId/verify-payment', adminAuthMiddleware, verifyPayment);
+router.get('/withdrawals', adminAuthMiddleware, getWithdrawalRequests);
+router.post('/withdrawals/:orderId/process', adminAuthMiddleware, processWithdrawal);
 
 module.exports = router;
 

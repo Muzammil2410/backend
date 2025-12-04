@@ -314,3 +314,134 @@ exports.verifyPayment = async (req, res) => {
   }
 };
 
+// @desc    Get all withdrawal requests
+// @route   GET /api/admin/withdrawals
+// @access  Admin
+exports.getWithdrawalRequests = async (req, res) => {
+  try {
+    const Order = require('../models/Order');
+    const User = require('../models/User');
+
+    // Get all orders with pending withdrawal requests
+    const orders = await Order.find({
+      withdrawalRequested: true,
+      withdrawalStatus: 'pending'
+    })
+      .sort({ withdrawalRequestedAt: -1 })
+      .lean();
+
+    // Populate seller information and payment details
+    const PaymentDetail = require('../models/PaymentDetail');
+    const ordersWithSellerInfo = await Promise.all(
+      orders.map(async (order) => {
+        try {
+          const seller = await User.findById(order.sellerId).select('name email phone').lean();
+          
+          // Fetch seller's payment details
+          let paymentDetails = null;
+          try {
+            paymentDetails = await PaymentDetail.findOne({ userId: order.sellerId }).lean();
+          } catch (paymentError) {
+            console.error('Error fetching payment details for seller:', order.sellerId, paymentError);
+          }
+          
+          return {
+            ...order,
+            seller: seller || { name: 'Unknown Seller', email: 'N/A', phone: 'N/A' },
+            paymentDetails: paymentDetails || null
+          };
+        } catch (error) {
+          return {
+            ...order,
+            seller: { name: 'Unknown Seller', email: 'N/A', phone: 'N/A' },
+            paymentDetails: null
+          };
+        }
+      })
+    );
+
+    res.json({
+      success: true,
+      data: {
+        withdrawalRequests: ordersWithSellerInfo
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching withdrawal requests:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch withdrawal requests',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Process withdrawal request (approve or reject)
+// @route   POST /api/admin/withdrawals/:orderId/process
+// @access  Admin
+exports.processWithdrawal = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { action } = req.body; // 'approve' or 'reject'
+
+    const Order = require('../models/Order');
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    if (!order.withdrawalRequested) {
+      return res.status(400).json({
+        success: false,
+        message: 'This order does not have a withdrawal request'
+      });
+    }
+
+    if (order.withdrawalStatus !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: 'This withdrawal request has already been processed'
+      });
+    }
+
+    if (action === 'approve') {
+      order.withdrawalStatus = 'approved';
+      order.withdrawalProcessedAt = new Date();
+      await order.save();
+
+      res.json({
+        success: true,
+        message: 'Withdrawal request approved successfully',
+        data: order
+      });
+    } else if (action === 'reject') {
+      order.withdrawalStatus = 'rejected';
+      order.withdrawalRequested = false; // Reset so seller can request again
+      order.withdrawalProcessedAt = new Date();
+      await order.save();
+
+      res.json({
+        success: true,
+        message: 'Withdrawal request rejected',
+        data: order
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid action. Use "approve" or "reject"'
+      });
+    }
+  } catch (error) {
+    console.error('Error processing withdrawal:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process withdrawal',
+      error: error.message
+    });
+  }
+};
+

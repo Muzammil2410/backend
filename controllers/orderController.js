@@ -279,3 +279,101 @@ exports.updateOrder = async (req, res) => {
   }
 };
 
+// Request withdrawal for an order
+exports.requestWithdrawal = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sellerId = req.userId;
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Check authorization - only seller can request withdrawal
+    if (order.sellerId !== sellerId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to request withdrawal for this order'
+      });
+    }
+
+    // Check if order is completed
+    if (order.status !== 'Completed') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only completed orders can have withdrawal requests'
+      });
+    }
+
+    // Check if withdrawal already requested
+    if (order.withdrawalRequested) {
+      return res.status(400).json({
+        success: false,
+        message: 'Withdrawal already requested for this order'
+      });
+    }
+
+    // Request withdrawal
+    order.withdrawalRequested = true;
+    order.withdrawalRequestedAt = new Date();
+    order.withdrawalStatus = 'pending';
+    order.updatedAt = Date.now();
+    await order.save();
+
+    res.json({
+      success: true,
+      message: 'Withdrawal request submitted successfully',
+      data: order
+    });
+  } catch (error) {
+    console.error('Error requesting withdrawal:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to request withdrawal',
+      error: error.message
+    });
+  }
+};
+
+// Get orders eligible for withdrawal (completed orders without withdrawal request)
+exports.getWithdrawalEligibleOrders = async (req, res) => {
+  try {
+    const sellerId = req.userId;
+
+    if (!sellerId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Seller ID is required'
+      });
+    }
+
+    // Get completed orders that haven't requested withdrawal yet
+    const orders = await Order.find({
+      sellerId,
+      status: 'Completed',
+      withdrawalRequested: { $ne: true }
+    })
+      .sort({ completedAt: -1, createdAt: -1 })
+      .lean();
+
+    res.json({
+      success: true,
+      data: {
+        orders
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching withdrawal eligible orders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch orders',
+      error: error.message
+    });
+  }
+};
+

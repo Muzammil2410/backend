@@ -22,5 +22,11 @@ router.get('/:id', authMiddleware, orderController.getOrderById);
 // Update order (requires authentication)
 router.put('/:id', authMiddleware, orderController.updateOrder);
 
+// Request withdrawal for an order (requires authentication)
+router.post('/:id/request-withdrawal', authMiddleware, orderController.requestWithdrawal);
+
+// Get orders eligible for withdrawal (requires authentication)
+router.get('/withdrawal/eligible', authMiddleware, orderController.getWithdrawalEligibleOrders);
+
 module.exports = router;
 

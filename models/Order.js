@@ -89,6 +89,23 @@ const orderSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  withdrawalRequested: {
+    type: Boolean,
+    default: false
+  },
+  withdrawalRequestedAt: {
+    type: Date,
+    default: null
+  },
+  withdrawalStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected', null],
+    default: null
+  },
+  withdrawalProcessedAt: {
+    type: Date,
+    default: null
+  },
   createdAt: {
     type: Date,
     default: Date.now
